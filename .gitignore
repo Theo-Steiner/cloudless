@@ -1,0 +1,13 @@
+# Local dependencies and generated output
+node_modules/
+.svelte-kit/
+build/
+dist/
+coverage/
+
+# Local credentials and machine state
+.env
+.env.*
+!.env.example
+*.local
+.DS_Store

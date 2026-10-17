@@ -1,0 +1,169 @@
+# cloudless
+
+Clear the ragebait. Keep scrolling.
+
+Cloudless is a browser extension that replaces unwanted posts on Twitter / X with posts from your own Bluesky timeline. You choose what to filter, and you can like, repost, and reply to the replacements from the feed using your Bluesky account.
+
+**Status:** architecture and planning. This repository does not contain a working extension yet. The diagrams describe the intended design; extension support and timeline access still need to be added to the existing ATProto bridge.
+
+## The idea
+
+- Choose filters for ragebait, hate, misogyny / incel ideology, MAGA promotion, engagement farming, or your own topics and instructions.
+- Tune each filter independently. Distinguish advocacy from reporting, criticism, quotation, and satire.
+- Replace matching posts with unseen posts from people you follow on Bluesky.
+- Keep a visible Bluesky label on replacements. Likes, reposts, and replies happen on Bluesky.
+- Reveal the original post, correct a classification, or pause filtering at any time.
+
+The first target is the desktop X home feed in a Chromium Manifest V3 extension.
+
+## Architecture
+
+The extension manages the feed and the browser session. The existing [svebcomponents ATProto bridge](https://atproto.svebcomponents.dev/) continues to own ATProto OAuth and account credentials.
+
+```mermaid
+flowchart TB
+    subgraph page["x.com — page context"]
+        feed["X home feed"]
+        slots["Replacement slots"]
+    end
+
+    subgraph extension["Cloudless — extension context"]
+        observer["Content script\nObserve feed and manage slots"]
+        ui["Packaged extension-origin iframes\nATProto cards and reply composer"]
+        settings["SvelteKit popup and settings\nSign-in and filter preferences"]
+        worker["Extension background service worker\nValidated messages, API calls, replacement queue"]
+        storage[("Extension-private storage\nBridge session and preferences")]
+    end
+
+    subgraph hosted["Existing hosted ATProto service"]
+        bridge["atproto.svebcomponents.dev/atproto\nOAuth, replies, likes, reposts\nExtension support and timeline endpoint to add"]
+        sessions[("Server-side OAuth sessions\nATProto access and refresh tokens")]
+    end
+
+    pds["User's PDS and Bluesky AppView"]
+    classifier["Classification gateway — planned\nClef / OpenAI Decisions provider adapter"]
+
+    feed -->|"Observed by"| observer
+    observer -->|"Post text and slot IDs"| worker
+    worker -->|"Replacement assignment"| observer
+    observer -->|"Create or remove"| slots
+    slots -.->|"Embed extension frame"| ui
+    ui <-->|"Display data and typed actions"| worker
+    settings <-->|"Account and preferences"| worker
+    worker <--> storage
+    worker <-->|"Bridge-authenticated requests"| bridge
+    bridge <--> sessions
+    bridge <-->|"Authenticated API calls"| pds
+    worker <-->|"Selected post content and category scores"| classifier
+```
+
+The content script runs in an isolated JavaScript world but shares X's DOM. It handles observation and placement. The cards and composer run in packaged extension-origin iframes, which give them a separate document and origin. Shadow DOM alone would only isolate styling.
+
+The worker owns authenticated requests. Tokens stay out of X's DOM, page storage, component attributes, and page messages. Messages expose specific operations such as requesting a replacement or liking an assigned post; the worker validates the sender, frame, payload, and allowed operation.
+
+The worker can stop between events. Session state and the replacement queue must survive a worker restart, with expired sessions refreshed when needed. Use extension storage with appropriate access restrictions; keep temporary secrets in `chrome.storage.session`, and do not sync credentials.
+
+## Reuse the existing ATProto project
+
+Cloudless builds on [svebcomponents/atproto](https://github.com/svebcomponents/atproto):
+
+| Piece | Reuse | Integration work |
+| --- | --- | --- |
+| `@svebcomponents/atproto.comments` | Thread rendering, rich text, reply composer, reactions, live updates | A compact feed-card presentation and an injectable extension client |
+| `@svebcomponents/atproto.client` | Thread normalization, viewer URLs, bridge API contract | Extension messaging and storage adapters |
+| `@svebcomponents/atproto.bridge` | Hosted OAuth, server-side credentials, replies, likes / unlikes, reposts / undo | Extension sign-in handoff, origin validation, and authenticated timeline access |
+
+The hosted bridge is an existing dependency, not something shipped inside the extension. Its current HTTP(S)-only origin validation and website-oriented login handoff need explicit extension support. This must preserve session binding rather than treating a missing origin as trusted.
+
+The bridge currently requests narrow posting and reaction permissions. Fetching the signed-in user's timeline needs an additional API endpoint and the corresponding read permission. Existing users may need to authorize the expanded grant.
+
+### Sign-in and sessions
+
+Start with the bridge's existing bearer-session design. Only the extension stores the short-lived bridge token. ATProto access tokens, refresh tokens, and confidential-client signing keys remain on the hosted service.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant UI as Extension sign-in UI
+    participant Worker as Extension worker
+    participant Bridge as Hosted ATProto bridge
+    participant PDS as User's authorization server / PDS
+
+    User->>UI: Connect Bluesky
+    UI->>Worker: Begin sign-in
+    Worker->>Bridge: Start extension-bound sign-in (to add)
+    Bridge->>PDS: Existing ATProto OAuth flow
+    User->>PDS: Sign in and approve permissions
+    PDS->>Bridge: OAuth callback
+    Note over Bridge: Keep ATProto credentials server-side
+    Worker->>Bridge: Complete extension-bound session handoff (to add)
+    Bridge-->>Worker: Short-lived bridge session
+    Note over Worker: Store in extension-private storage
+    Worker-->>UI: Account display information
+    User->>UI: Like a Bluesky post
+    UI->>Worker: Like assigned post
+    Worker->>Bridge: Authenticated like request
+    Bridge->>PDS: Create like record
+    PDS-->>Bridge: Record reference
+    Bridge-->>Worker: Updated reaction state
+    Worker-->>UI: Update card
+```
+
+Real `HttpOnly; Secure` cookie sessions are a possible later transport on the HTTPS bridge. Its current cookie mode is intended for same-origin websites, so extension cookie support needs its own origin / CSRF handling and browser-policy checks. Do not switch the public bridge's existing embeds to cookie mode as part of the extension integration.
+
+## Building with SvelteKit
+
+SvelteKit can build the extension's UI. Its [browser-extension documentation](https://svelte.dev/docs/kit/project-types#Browser-extension) supports using [`adapter-static`](https://svelte.dev/docs/kit/adapter-static) for this target.
+
+| Build output | Responsibility |
+| --- | --- |
+| Static SvelteKit pages | Popup, settings, sign-in UI, and embedded card / composer pages |
+| Separate TypeScript background bundle | Manifest V3 service worker and extension APIs |
+| Separate TypeScript content-script bundle | X feed observation and slot placement |
+| Packaged manifest and assets | Entry points, host permissions, CSP, and the resources X may embed |
+
+Proposed source layout, to be created when implementation starts:
+
+```text
+src/
+  routes/
+    popup/             # Toolbar popup
+    settings/          # Filter and account settings
+    card/              # Extension iframe UI
+  lib/
+    atproto/           # Component and client adapters
+    classification/    # Category definitions and provider interface
+    messaging/         # Shared, validated message contracts
+  extension/
+    background.ts      # Manifest V3 background worker
+    content.ts         # X feed adapter
+static/
+  manifest.json
+```
+
+Prerender the UI routes to explicit HTML files that the manifest and iframe URLs can reference. Keep all executable UI code in the extension package. The build must emit CSP-compatible external scripts, including any SvelteKit bootstrap code; SvelteKit's generated CSP hashes do not replace the extension manifest's restrictions.
+
+SvelteKit's PWA service-worker registration is separate from the extension's background worker. Disable automatic web service-worker registration and declare the extension worker in `manifest.json`. Runtime server routes, form actions, and server-only modules stay on a hosted server; `adapter-static` does not turn them into extension-worker handlers.
+
+The first build spike should verify static page loading, relative asset paths, the extension CSP, iframe embedding, and worker messaging in a real unpacked extension.
+
+## Filtering and replacements
+
+The worker checks explicit user rules and cached decisions first, then sends selected content to a classifier when necessary. Categories produce independent scores; user settings decide which scores trigger replacement. Quoted content and the post's stance should be considered together.
+
+Keep the provider replaceable. [Clef-flash](https://developers.cloudflare.com/workers-ai/models/clef-flash/) and [OpenAI Decisions](https://developers.openai.com/api/docs/guides/decisions) are candidates, to be evaluated on the same labeled examples for false positives, latency, and cost. Model probabilities need evaluation against actual posts before becoming user-facing sensitivity thresholds.
+
+Cloud classification requires an explicit choice about sending post content to a provider. A hosted classification gateway would hold any shared provider credentials; those credentials must not be bundled into a public extension. This gateway is planned work, separate from the existing ATProto bridge.
+
+Fetch Bluesky posts into a bounded queue, preserve their feed order, and deduplicate by post URI. Classify X posts just ahead of the viewport to reduce flashes of unwanted content. If classification is unavailable or the queue is empty, use a neutral placeholder with a show-original control. Keep the choice reversible.
+
+Replacing a post changes what is displayed locally. X has already delivered the original post and may still record its own feed telemetry.
+
+## First milestones
+
+1. Package one SvelteKit card page, content script, and background worker as a loadable extension.
+2. Connect the hosted bridge through an extension-bound session and verify a real like and reply.
+3. Add timeline access, a replacement queue, and stable replacement across X feed rerenders.
+4. Add configurable filters, classifier evaluation, and reveal / undo controls.
+
+See also: [Chrome content scripts](https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts), [extension messaging](https://developer.chrome.com/docs/extensions/develop/concepts/messaging), and [extension CSP](https://developer.chrome.com/docs/extensions/reference/manifest/content-security-policy).
