@@ -21,8 +21,10 @@ integration boundaries in `docs/atproto-integration.md` when implementing it.
   at runtime and must never be baked into the extension build.
 - Check root-post moderation, unsupported embeds, shared account state, and
   bounded iframe / live-connection lifetimes when adding feed presentation.
-- Support explicit Bluesky feed selection. Discover / custom generators use
-  `getFeed`; Following uses `getTimeline`. Preserve source order and scope
-  queues and cursors to the account, source, and language preferences.
+- Use Spacecowboy's For You as the initial feed source:
+  `at://did:plc:3guzzweuqraryl3rdkimjamk/app.bsky.feed.generator/for-you`.
+  It and other custom generators use authenticated `getFeed`; Following uses
+  `getTimeline`. Preserve source order and scope queues and cursors to the
+  account, source, and language preferences.
 - Preserve the existing checkout for quick read-only work. Use managed worktrees
   when isolation is needed; archive task-owned worktrees when no longer needed.

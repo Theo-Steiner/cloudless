@@ -54,11 +54,22 @@ Sources: [normalization](https://github.com/svebcomponents/atproto/blob/ca0ffb9e
 
 Extend the hosted bridge with bounded, cursor-based feed access and the necessary OAuth read / proxy permissions. Retain the existing server-side OAuth client, session stores, grant revocation, rate limits, and reply / reaction handlers.
 
-Support two source kinds: Following, served by `app.bsky.feed.getTimeline`, and a feed generator identified by an AT URI, served by `app.bsky.feed.getFeed`. Discover is a feed-generator selection with URI `at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/whats-hot`. Other custom feeds use the same API with their own URI.
+Support two source kinds: a feed generator identified by an AT URI, served by `app.bsky.feed.getFeed`, and Following, served by `app.bsky.feed.getTimeline`. The initial generator selection is [For You by @spacecowboy17.bsky.social](https://bsky.app/profile/spacecowboy17.bsky.social/feed/for-you):
+
+| Field | Verified value |
+| --- | --- |
+| Feed URI | `at://did:plc:3guzzweuqraryl3rdkimjamk/app.bsky.feed.generator/for-you` |
+| Creator | `spacecowboy17.bsky.social` |
+| Generator DID | `did:web:foryou.club` |
+| Interaction support | `acceptsInteractions: true` |
+
+These values were resolved using `app.bsky.feed.getFeedGenerator`. Other custom feeds use the same feed-read API with their own URI. Keep the exact creator and record key when resolving a feed URL; its display name is not a unique identity.
 
 The bridge performs personalized feed reads using the signed-in account, forwards explicitly selected language preferences, and returns the cursor and any opaque feed context alongside the posts. Resolve feed metadata through the AppView; a selected feed URI must not become an arbitrary network URL to proxy. Keep OAuth grants limited to the selected capabilities.
 
-Bluesky's client performs additional filtering, caching, and recommendation feedback. Fetching the personalized generator is supported, but it does not guarantee an identical stream to the first-party app. Preserve opaque context for future accurate feedback. If feedback is implemented, report actual visible impressions and explicit interactions; prefetched posts are not viewed posts. [Feed API guide](https://bsky.network/docs/bluesky-api/viewing-feeds/#feed-generators), [current feed client](https://github.com/bluesky-social/social-app/blob/main/src/lib/api/feed/custom.ts), and [feed selection](https://github.com/bluesky-social/social-app/blob/main/src/lib/constants.ts).
+For You uses likes and reposts from the network to generate recommendations. A normal like through the existing bridge participates in that process without a separate Cloudless recommender. The generator also supports `app.bsky.feed.sendInteractions`, including explicit show-more / show-less feedback. Supporting those controls would require a new, appropriately scoped bridge operation; the current bridge does not provide it. Preserve opaque feed context for that future integration and report actual interactions. Prefetched posts are not viewed posts.
+
+The maintainer notes that the generator is unaware of account blocks and mutes. Preserve and enforce the user's applicable moderation and visibility policy in the client / AppView integration rather than treating generator results as prefiltered. [For You's FAQ](https://foryou.club/), [the maintainer's architecture notes](https://atproto.com/blog/serving-the-for-you-feed), and [feed API guide](https://bsky.network/docs/bluesky-api/viewing-feeds/#feed-generators).
 
 Add explicit extension-client sign-in and session binding. Do not reuse `x.com` as the account's trusted embedding origin or accept absent / opaque origins as authorization. Keep existing website consumers working.
 
@@ -68,7 +79,7 @@ Preserve the user's existing Bluesky moderation and visibility decisions. A late
 
 ## Data flow and lifecycle
 
-1. The worker fetches a page from the selected Discover, Following, or custom feed through the bridge and assigns supported, eligible posts to replacement slots. Queue and cursor state is isolated per account, source URI / kind, and language settings and reset when those change.
+1. The worker fetches a page from the selected For You, Following, or other custom feed through the bridge and assigns supported, eligible posts to replacement slots. Queue and cursor state is isolated per account, source URI / kind, and language settings and reset when those change.
 2. Prefetch the real thread snapshot only for cards that are about to be shown. Use the exported fetch helpers and conservative reply depth, then pass `threadData` and its fetch timestamp into the component.
 3. The component uses its own rendering, reaction state, and optimistic reply behavior. Its injected session client delegates authorized operations to the worker, which calls the hosted bridge.
 4. Opening replies loads the actual discussion. Enable the component's live refresh only for an active discussion, and release it when collapsed, hidden, or unmounted.
@@ -104,7 +115,7 @@ Keep dependency attribution in technical documentation and license notices. Feed
 - A card mounts the published custom element and uses its public styling API.
 - A fresh preloaded snapshot renders immediately without an unnecessary second read; a stale snapshot revalidates through the supported path.
 - Root moderation labels survive normalization and are enforced in feed presentation. Unsupported embeds have an explicit fallback.
-- Discover and Following use their respective authenticated endpoints. Switching account, feed, or language cannot reuse another source's cursor or queued posts, and ranked feeds keep their returned order.
+- For You resolves to Spacecowboy's exact feed URI and uses authenticated `getFeed`; Following uses authenticated `getTimeline`. Switching account, feed, or language cannot reuse another source's cursor or queued posts, and ranked feeds keep their returned order.
 - Sign-in and account changes reach all mounted cards without exposing credentials to the page or component properties.
 - Existing likes / reposts restore correctly, toggles can be undone, and reply root / parent references remain correct through the component's own composer.
 - Expanding replies preserves thread semantics; collapsing or recycling a card releases live connections and pending work.

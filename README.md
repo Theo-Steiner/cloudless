@@ -10,7 +10,7 @@ Cloudless is a browser extension that replaces unwanted posts on Twitter / X wit
 
 - Choose filters for ragebait, hate, misogyny / incel ideology, engagement farming, or your own topics and instructions.
 - Tune each filter independently. Distinguish advocacy from reporting, criticism, quotation, and satire.
-- Replace matching posts with unseen posts from Bluesky Discover, Following, or a custom feed you choose.
+- Replace matching posts with unseen posts from [Spacecowboy's For You](https://bsky.app/profile/spacecowboy17.bsky.social/feed/for-you), with Following and other custom feeds available as alternatives.
 - Keep a visible Bluesky label on replacements. Likes, reposts, and replies happen on Bluesky.
 - Reveal the original post, correct a classification, or pause filtering at any time.
 
@@ -129,19 +129,19 @@ Real `HttpOnly; Secure` cookie sessions are a possible later transport on the HT
 
 ## Bluesky feed sources
 
-The replacement source is a setting:
+The initial replacement source is [For You by @spacecowboy17.bsky.social](https://bsky.app/profile/spacecowboy17.bsky.social/feed/for-you). It recommends posts using shared likes: find people who liked the same posts as you, then see what else they liked. The replacement source remains a setting:
 
 | Source | Bluesky API | Behavior |
 | --- | --- | --- |
-| Discover | `app.bsky.feed.getFeed` with the Discover feed URI | Personalized recommendations fetched using the connected account |
+| Spacecowboy's For You (default) | `app.bsky.feed.getFeed` with the For You feed URI | Personalized recommendations fetched using the connected account |
 | Following | `app.bsky.feed.getTimeline` | The connected account's chronological following timeline |
-| Custom feed | `app.bsky.feed.getFeed` with the selected feed URI | Posts from that feed, with personalization depending on its generator |
+| Other custom feed | `app.bsky.feed.getFeed` with the selected feed URI | Posts from that feed, with personalization depending on its generator |
 
-Bluesky's current client and API examples call its personalized recommendation feed **Discover**. Its feed URI is `at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/whats-hot`. A separately named "For You" custom feed is identified by its own URI, rather than its display name.
+For You's canonical feed URI is `at://did:plc:3guzzweuqraryl3rdkimjamk/app.bsky.feed.generator/for-you`, and its generator is `did:web:foryou.club`. Select the feed by this record identity rather than its display name.
 
-Fetch personalized feeds through the bridge's authenticated PDS / AppView path. Keep language preferences, opaque pagination cursors, and feed context with the selected source. The first-party app also applies its own preferences, filtering, and feedback, so Cloudless should not promise an identical stream to an open Bluesky tab.
+Fetch For You through the bridge's authenticated PDS / AppView path so the generator receives the connected account's identity. Keep language preferences, opaque pagination cursors, and feed context with the selected source. Likes created through the existing bridge are ordinary Bluesky likes, which For You can observe through the network. Apply the user's moderation and visibility settings when displaying results; the generator does not incorporate all of those settings itself.
 
-Sources: [Bluesky feed API guide](https://bsky.network/docs/bluesky-api/viewing-feeds/#feed-generators) and [Bluesky's feed client](https://github.com/bluesky-social/social-app/blob/main/src/lib/api/feed/custom.ts).
+Sources: [For You](https://foryou.club/), [the maintainer's architecture notes](https://atproto.com/blog/serving-the-for-you-feed), and [Bluesky feed API guide](https://bsky.network/docs/bluesky-api/viewing-feeds/#feed-generators).
 
 ## Building with SvelteKit
 
@@ -195,7 +195,7 @@ Replacing a post changes what is displayed locally. X has already delivered the 
 
 1. Package the actual ATProto web component in a SvelteKit extension page and verify snapshots, theming, iframe layout, and worker messaging.
 2. Add reusable session-client injection and extension bridge support upstream; verify sign-in, existing reaction state, a real like / unlike, and a reply using the component's own UI.
-3. Add Discover / Following / custom feed access and safe feed-card presentation upstream, then a source-aware replacement queue and stable replacement across X feed rerenders in Cloudless.
+3. Add For You / Following / custom feed access and safe feed-card presentation upstream, then a source-aware replacement queue and stable replacement across X feed rerenders in Cloudless.
 4. Add configurable filters, classifier evaluation, and reveal / undo controls.
 
 See also: [Chrome content scripts](https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts), [extension messaging](https://developer.chrome.com/docs/extensions/develop/concepts/messaging), and [extension CSP](https://developer.chrome.com/docs/extensions/reference/manifest/content-security-policy).
