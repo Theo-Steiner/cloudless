@@ -1,7 +1,11 @@
 # Cloudless development
 
-Cloudless is a real-world showcase for `svebcomponents/atproto`. Follow the
+Build Cloudless on the public APIs of `svebcomponents/atproto`. Follow the
 integration boundaries in `docs/atproto-integration.md` when implementing it.
+
+- Describe the product through its behavior and concrete architecture. Keep
+  user-facing copy focused on the feed and interactions, with dependency
+  attribution in technical documentation and license notices.
 
 - Consume the published ATProto packages through their public exports. Use
   the actual custom element for posts, threads, reactions, and composition.
@@ -17,5 +21,8 @@ integration boundaries in `docs/atproto-integration.md` when implementing it.
   at runtime and must never be baked into the extension build.
 - Check root-post moderation, unsupported embeds, shared account state, and
   bounded iframe / live-connection lifetimes when adding feed presentation.
+- Support explicit Bluesky feed selection. Discover / custom generators use
+  `getFeed`; Following uses `getTimeline`. Preserve source order and scope
+  queues and cursors to the account, source, and language preferences.
 - Preserve the existing checkout for quick read-only work. Use managed worktrees
   when isolation is needed; archive task-owned worktrees when no longer needed.

@@ -1,6 +1,6 @@
 # Using svebcomponents/atproto in Cloudless
 
-Cloudless should show what a consumer can build with the published ATProto packages. Keep ATProto rendering and interaction behavior in those packages, and make the extension-specific integration small and explicit.
+Use the published ATProto packages for post rendering, account interactions, and shared data handling. Keep the extension-specific integration small and explicit.
 
 This plan is grounded in [source revision ca0ffb9](https://github.com/svebcomponents/atproto/tree/ca0ffb9efb6f842828486337b74bdaae1ca1fa59). Names described as proposed are design work, not APIs that already ship. No upstream changes have been made as part of this document.
 
@@ -12,7 +12,7 @@ This plan is grounded in [source revision ca0ffb9](https://github.com/svebcompon
 | `thread`, `show-root` | Identify the real thread and display its root | Showing the root still includes a comment-section layout; compact / collapsed presentation is proposed work |
 | `threadData`, `fetchedAt`, `stale-time` | Hand the component a real prefetched snapshot and its freshness boundary | `threadData` is a JavaScript property, not a JSON HTML attribute; never include credentials |
 | `fetchCommentTree`, `getPostThread` | Prefetch actual thread snapshots with bounded depth; load discussion when expanded | The helpers already accept an injected fetch and abort signal |
-| `normalizeThread`, `CommentTree`, `PostView` | Share the package's normalization and data types across the worker and UI | A timeline item is not a complete thread; preserve the distinction between unloaded and absent replies |
+| `normalizeThread`, `CommentTree`, `PostView` | Share the package's normalization and data types across the worker and UI | A feed item is not a complete thread; preserve the distinction between unloaded and absent replies |
 | `parseThreadRef`, `resolveThreadUri` | Resolve supported viewer URLs and AT URIs consistently | Prefer canonical post URIs as cache and deduplication keys |
 | `segmentRichText`, `viewerPostUrl`, `viewerProfileUrl`, `viewerTagUrl` | Keep facets and outbound links consistent wherever the host needs them | The component already uses these helpers for its own rendering |
 | `ServiceClient` and its exported request/result types | Retain one bridge API contract for sessions, replies, reactions, and viewer state | Its fetch hook is useful, but storage, sign-in, and session restoration also need abstraction |
@@ -50,19 +50,25 @@ There are two concrete data gaps to address:
 
 Sources: [normalization](https://github.com/svebcomponents/atproto/blob/ca0ffb9efb6f842828486337b74bdaae1ca1fa59/packages/atproto-client/src/commentTree.ts) and [root presentation](https://github.com/svebcomponents/atproto/blob/ca0ffb9efb6f842828486337b74bdaae1ca1fa59/components/atproto-comments/src/index.svelte#L215).
 
-### Timeline access through the existing bridge
+### Feed access through the existing bridge
 
-Extend the hosted bridge with a bounded, cursor-based timeline endpoint and the necessary OAuth permission. Retain the existing server-side OAuth client, session stores, grant revocation, rate limits, and reply / reaction handlers.
+Extend the hosted bridge with bounded, cursor-based feed access and the necessary OAuth read / proxy permissions. Retain the existing server-side OAuth client, session stores, grant revocation, rate limits, and reply / reaction handlers.
+
+Support two source kinds: Following, served by `app.bsky.feed.getTimeline`, and a feed generator identified by an AT URI, served by `app.bsky.feed.getFeed`. Discover is a feed-generator selection with URI `at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/whats-hot`. Other custom feeds use the same API with their own URI.
+
+The bridge performs personalized feed reads using the signed-in account, forwards explicitly selected language preferences, and returns the cursor and any opaque feed context alongside the posts. Resolve feed metadata through the AppView; a selected feed URI must not become an arbitrary network URL to proxy. Keep OAuth grants limited to the selected capabilities.
+
+Bluesky's client performs additional filtering, caching, and recommendation feedback. Fetching the personalized generator is supported, but it does not guarantee an identical stream to the first-party app. Preserve opaque context for future accurate feedback. If feedback is implemented, report actual visible impressions and explicit interactions; prefetched posts are not viewed posts. [Feed API guide](https://bsky.network/docs/bluesky-api/viewing-feeds/#feed-generators), [current feed client](https://github.com/bluesky-social/social-app/blob/main/src/lib/api/feed/custom.ts), and [feed selection](https://github.com/bluesky-social/social-app/blob/main/src/lib/constants.ts).
 
 Add explicit extension-client sign-in and session binding. Do not reuse `x.com` as the account's trusted embedding origin or accept absent / opaque origins as authorization. Keep existing website consumers working.
 
-Feed data will need shared normalization beyond today's thread-only helpers. Put broadly useful post and timeline types and normalization in `atproto.client`. Preserve labels, embeds, cursor order, and relevant viewer state; keep Cloudless's replacement queue and X-slot assignments outside the package. Never construct a fake complete thread by discarding a timeline post's replies or moderation data.
+Feed data will need shared normalization beyond today's thread-only helpers. Put broadly useful post and feed types and normalization in `atproto.client`. Preserve labels, embeds, the generator's returned order, cursor / feed context, and relevant viewer state; keep Cloudless's replacement queue and X-slot assignments outside the package. Never construct a fake complete thread by discarding a feed post's replies or moderation data.
 
 Preserve the user's existing Bluesky moderation and visibility decisions. A later public thread read must not override authenticated eligibility or viewer state, or reintroduce a post excluded from the replacement queue. Keep those decisions separate from Cloudless's user-selected X filters.
 
 ## Data flow and lifecycle
 
-1. The worker fetches a page of timeline candidates through the bridge and assigns supported, eligible posts to replacement slots.
+1. The worker fetches a page from the selected Discover, Following, or custom feed through the bridge and assigns supported, eligible posts to replacement slots. Queue and cursor state is isolated per account, source URI / kind, and language settings and reset when those change.
 2. Prefetch the real thread snapshot only for cards that are about to be shown. Use the exported fetch helpers and conservative reply depth, then pass `threadData` and its fetch timestamp into the component.
 3. The component uses its own rendering, reaction state, and optimistic reply behavior. Its injected session client delegates authorized operations to the worker, which calls the hosted bridge.
 4. Opening replies loads the actual discussion. Enable the component's live refresh only for an active discussion, and release it when collapsed, hidden, or unmounted.
@@ -80,7 +86,7 @@ Use SvelteKit's static output for the extension's packaged pages. Load and regis
 
 The component's `threadData` channel is useful for runtime prefetching as well as SSR. Using it in an extension does not require an HTTP rendering server. Bind account data and thread snapshots only after the extension starts; browser APIs must stay out of build-time rendering.
 
-Use the package's `./ssr` entry and svebcomponents' SvelteKit integration for a future public demo or documentation site if it improves first paint. Such a site can demonstrate declarative shadow DOM and hydration with public example content. It is an optional showcase surface, not a prerequisite for the extension and not a place to serialize account credentials.
+The package's `./ssr` entry and svebcomponents' SvelteKit integration can improve first paint on hosted public documentation pages. Use public example content there, and keep account credentials out of serialized properties. The extension's runtime feed does not require a separate rendering server.
 
 ## What stays in Cloudless
 
@@ -91,13 +97,14 @@ Use the package's `./ssr` entry and svebcomponents' SvelteKit integration for a 
 
 ATProto packages should not acquire X selectors, classification-provider credentials, or a hard dependency on Chrome extension APIs. Consume upstream releases through public exports, record compatible versions, and use a temporary fork only when an explicit, documented development need requires one.
 
-Credit svebcomponents/atproto in the README, extension About / settings UI, and eventual store listing. Keep everyday feed cards focused on the post and its Bluesky origin; the showcase comes from the component working well in a different host.
+Keep dependency attribution in technical documentation and license notices. Feed cards identify the post's Bluesky origin and where interactions go; their controls stay focused on the reader's actions.
 
 ## Acceptance checks for the first implementation
 
 - A card mounts the published custom element and uses its public styling API.
 - A fresh preloaded snapshot renders immediately without an unnecessary second read; a stale snapshot revalidates through the supported path.
 - Root moderation labels survive normalization and are enforced in feed presentation. Unsupported embeds have an explicit fallback.
+- Discover and Following use their respective authenticated endpoints. Switching account, feed, or language cannot reuse another source's cursor or queued posts, and ranked feeds keep their returned order.
 - Sign-in and account changes reach all mounted cards without exposing credentials to the page or component properties.
 - Existing likes / reposts restore correctly, toggles can be undone, and reply root / parent references remain correct through the component's own composer.
 - Expanding replies preserves thread semantics; collapsing or recycling a card releases live connections and pending work.

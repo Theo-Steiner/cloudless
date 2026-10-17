@@ -2,17 +2,15 @@
 
 Clear the ragebait. Keep scrolling.
 
-Cloudless is a browser extension that replaces unwanted posts on Twitter / X with posts from your own Bluesky timeline. You choose what to filter, and you can like, repost, and reply to the replacements from the feed using your Bluesky account.
+Cloudless is a browser extension that replaces unwanted posts on Twitter / X with posts from your chosen Bluesky feed. You choose what to filter, and you can like, repost, and reply to the replacements from the feed using your Bluesky account.
 
-It is also a real-world showcase for [svebcomponents/atproto](https://github.com/svebcomponents/atproto): its published web components provide the Bluesky experience, its framework-neutral primitives handle ATProto data, and its hosted bridge owns OAuth and account interactions. Cloudless supplies the extension integration and filtering.
-
-**Status:** architecture and planning. This repository does not contain a working extension yet. The diagrams describe the intended design; extension support and timeline access still need to be added to the existing ATProto bridge.
+**Status:** architecture and planning. This repository does not contain a working extension yet. The diagrams describe the intended design; extension support and feed access still need to be added to the existing ATProto bridge.
 
 ## The idea
 
 - Choose filters for ragebait, hate, misogyny / incel ideology, engagement farming, or your own topics and instructions.
 - Tune each filter independently. Distinguish advocacy from reporting, criticism, quotation, and satire.
-- Replace matching posts with unseen posts from people you follow on Bluesky.
+- Replace matching posts with unseen posts from Bluesky Discover, Following, or a custom feed you choose.
 - Keep a visible Bluesky label on replacements. Likes, reposts, and replies happen on Bluesky.
 - Reveal the original post, correct a classification, or pause filtering at any time.
 
@@ -38,7 +36,7 @@ flowchart TB
     end
 
     subgraph hosted["Existing hosted ATProto service"]
-        bridge["atproto.svebcomponents.dev/atproto\nOAuth, replies, likes, reposts\nExtension support and timeline endpoint to add"]
+        bridge["atproto.svebcomponents.dev/atproto\nOAuth, replies, likes, reposts\nExtension support and feed endpoint to add"]
         sessions[("Server-side OAuth sessions\nATProto access and refresh tokens")]
     end
 
@@ -57,7 +55,7 @@ flowchart TB
     worker <-->|"Bridge-authenticated requests"| bridge
     bridge <--> sessions
     bridge <-->|"Authenticated API calls"| pds
-    pds <-->|"Authenticated timeline proxy"| appview
+    pds <-->|"Authenticated feed proxy"| appview
     worker <-->|"Public thread prefetch via atproto.client"| appview
     ui <-->|"Public thread reads and revalidation"| appview
     worker <-->|"Selected post content and category scores"| classifier
@@ -69,17 +67,17 @@ The worker owns authenticated requests. Tokens stay out of X's DOM, page storage
 
 The worker can stop between events. Session state and the replacement queue must survive a worker restart, with expired sessions refreshed when needed. Use extension storage with appropriate access restrictions; keep temporary secrets in `chrome.storage.session`, and do not sync credentials.
 
-## Reuse the existing ATProto project
+## ATProto integration
 
-Cloudless consumes the published packages through their public APIs. The post and thread experience should remain recognizable as the same component people can embed on their own sites.
+The post cards use the published [svebcomponents/atproto](https://github.com/svebcomponents/atproto) packages through their public APIs.
 
 | Piece | Reuse | Integration work |
 | --- | --- | --- |
 | `@svebcomponents/atproto.comments` | The actual custom element: rendering, rich text, composer, reactions, live updates, public events, CSS variables, and parts | Reusable compact / collapsed presentation and an injectable session client |
 | `@svebcomponents/atproto.client` | Public types, URI parsing, thread fetching and normalization, rich-text segmentation, viewer URLs, bridge API contract | Shared feed/post primitives and replaceable session storage / sign-in dependencies where needed |
-| `@svebcomponents/atproto.bridge` | Hosted OAuth, server-side credentials, replies, likes / unlikes, reposts / undo | Extension sign-in handoff, origin validation, and authenticated timeline access |
+| `@svebcomponents/atproto.bridge` | Hosted OAuth, server-side credentials, replies, likes / unlikes, reposts / undo | Extension sign-in handoff, origin validation, and authenticated feed access |
 
-### A showcase built on the public APIs
+### Component integration
 
 - Mount the real `<atproto-comments>` custom element inside the extension frame. Keep rendering, reaction state, optimistic updates, and reply composition in the package.
 - Supply real normalized snapshots through the existing `threadData` JavaScript property and pass `fetchedAt` for freshness. Use `fetchCommentTree`, `normalizeThread`, and the exported types instead of maintaining a second thread model.
@@ -93,7 +91,7 @@ The [ATProto integration plan](docs/atproto-integration.md) maps the existing pr
 
 The hosted bridge is an existing dependency, not something shipped inside the extension. Its current HTTP(S)-only origin validation and website-oriented login handoff need explicit extension support. This must preserve session binding rather than treating a missing origin as trusted.
 
-The bridge currently requests narrow posting and reaction permissions. Fetching the signed-in user's timeline needs an additional API endpoint and the corresponding read permission. Existing users may need to authorize the expanded grant.
+The bridge currently requests narrow posting and reaction permissions. Fetching feeds as the signed-in user needs an additional API endpoint and the corresponding read / proxy permissions. Existing users may need to authorize the expanded grant.
 
 ### Sign-in and sessions
 
@@ -128,6 +126,22 @@ sequenceDiagram
 ```
 
 Real `HttpOnly; Secure` cookie sessions are a possible later transport on the HTTPS bridge. Its current cookie mode is intended for same-origin websites, so extension cookie support needs its own origin / CSRF handling and browser-policy checks. Do not switch the public bridge's existing embeds to cookie mode as part of the extension integration.
+
+## Bluesky feed sources
+
+The replacement source is a setting:
+
+| Source | Bluesky API | Behavior |
+| --- | --- | --- |
+| Discover | `app.bsky.feed.getFeed` with the Discover feed URI | Personalized recommendations fetched using the connected account |
+| Following | `app.bsky.feed.getTimeline` | The connected account's chronological following timeline |
+| Custom feed | `app.bsky.feed.getFeed` with the selected feed URI | Posts from that feed, with personalization depending on its generator |
+
+Bluesky's current client and API examples call its personalized recommendation feed **Discover**. Its feed URI is `at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.generator/whats-hot`. A separately named "For You" custom feed is identified by its own URI, rather than its display name.
+
+Fetch personalized feeds through the bridge's authenticated PDS / AppView path. Keep language preferences, opaque pagination cursors, and feed context with the selected source. The first-party app also applies its own preferences, filtering, and feedback, so Cloudless should not promise an identical stream to an open Bluesky tab.
+
+Sources: [Bluesky feed API guide](https://bsky.network/docs/bluesky-api/viewing-feeds/#feed-generators) and [Bluesky's feed client](https://github.com/bluesky-social/social-app/blob/main/src/lib/api/feed/custom.ts).
 
 ## Building with SvelteKit
 
@@ -173,7 +187,7 @@ Keep the provider replaceable. [Clef-flash](https://developers.cloudflare.com/wo
 
 Cloud classification requires an explicit choice about sending post content to a provider. A hosted classification gateway would hold any shared provider credentials; those credentials must not be bundled into a public extension. This gateway is planned work, separate from the existing ATProto bridge.
 
-Fetch Bluesky posts into a bounded queue, preserve their feed order, and deduplicate by post URI. Classify X posts just ahead of the viewport to reduce flashes of unwanted content. If classification is unavailable or the queue is empty, use a neutral placeholder with a show-original control. Keep the choice reversible.
+Fetch Bluesky posts into a bounded queue, preserve the selected feed's returned order, and deduplicate by post URI. Scope the queue and cursors to the account, source, and language preferences; clear them when those settings change. Classify X posts just ahead of the viewport to reduce flashes of unwanted content. If classification is unavailable or the selected feed cannot supply a replacement, use a neutral placeholder with a show-original control. Keep the choice reversible.
 
 Replacing a post changes what is displayed locally. X has already delivered the original post and may still record its own feed telemetry.
 
@@ -181,7 +195,7 @@ Replacing a post changes what is displayed locally. X has already delivered the 
 
 1. Package the actual ATProto web component in a SvelteKit extension page and verify snapshots, theming, iframe layout, and worker messaging.
 2. Add reusable session-client injection and extension bridge support upstream; verify sign-in, existing reaction state, a real like / unlike, and a reply using the component's own UI.
-3. Add timeline access and safe feed-card presentation upstream, then a replacement queue and stable replacement across X feed rerenders in Cloudless.
+3. Add Discover / Following / custom feed access and safe feed-card presentation upstream, then a source-aware replacement queue and stable replacement across X feed rerenders in Cloudless.
 4. Add configurable filters, classifier evaluation, and reveal / undo controls.
 
 See also: [Chrome content scripts](https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts), [extension messaging](https://developer.chrome.com/docs/extensions/develop/concepts/messaging), and [extension CSP](https://developer.chrome.com/docs/extensions/reference/manifest/content-security-policy).
