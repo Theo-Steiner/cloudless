@@ -10,7 +10,7 @@ It is also a real-world showcase for [svebcomponents/atproto](https://github.com
 
 ## The idea
 
-- Choose filters for ragebait, hate, misogyny / incel ideology, MAGA promotion, engagement farming, or your own topics and instructions.
+- Choose filters for ragebait, hate, misogyny / incel ideology, engagement farming, or your own topics and instructions.
 - Tune each filter independently. Distinguish advocacy from reporting, criticism, quotation, and satire.
 - Replace matching posts with unseen posts from people you follow on Bluesky.
 - Keep a visible Bluesky label on replacements. Likes, reposts, and replies happen on Bluesky.
