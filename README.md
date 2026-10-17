@@ -4,6 +4,8 @@ Clear the ragebait. Keep scrolling.
 
 Cloudless is a browser extension that replaces unwanted posts on Twitter / X with posts from your own Bluesky timeline. You choose what to filter, and you can like, repost, and reply to the replacements from the feed using your Bluesky account.
 
+It is also a real-world showcase for [svebcomponents/atproto](https://github.com/svebcomponents/atproto): its published web components provide the Bluesky experience, its framework-neutral primitives handle ATProto data, and its hosted bridge owns OAuth and account interactions. Cloudless supplies the extension integration and filtering.
+
 **Status:** architecture and planning. This repository does not contain a working extension yet. The diagrams describe the intended design; extension support and timeline access still need to be added to the existing ATProto bridge.
 
 ## The idea
@@ -29,7 +31,7 @@ flowchart TB
 
     subgraph extension["Cloudless — extension context"]
         observer["Content script\nObserve feed and manage slots"]
-        ui["Packaged extension-origin iframes\nATProto cards and reply composer"]
+        ui["Packaged extension-origin iframes\natproto.comments web component\nShared rendering, reactions, and composer"]
         settings["SvelteKit popup and settings\nSign-in and filter preferences"]
         worker["Extension background service worker\nValidated messages, API calls, replacement queue"]
         storage[("Extension-private storage\nBridge session and preferences")]
@@ -40,7 +42,8 @@ flowchart TB
         sessions[("Server-side OAuth sessions\nATProto access and refresh tokens")]
     end
 
-    pds["User's PDS and Bluesky AppView"]
+    pds["User's PDS"]
+    appview["Bluesky AppView"]
     classifier["Classification gateway — planned\nClef / OpenAI Decisions provider adapter"]
 
     feed -->|"Observed by"| observer
@@ -54,6 +57,9 @@ flowchart TB
     worker <-->|"Bridge-authenticated requests"| bridge
     bridge <--> sessions
     bridge <-->|"Authenticated API calls"| pds
+    pds <-->|"Authenticated timeline proxy"| appview
+    worker <-->|"Public thread prefetch via atproto.client"| appview
+    ui <-->|"Public thread reads and revalidation"| appview
     worker <-->|"Selected post content and category scores"| classifier
 ```
 
@@ -65,13 +71,25 @@ The worker can stop between events. Session state and the replacement queue must
 
 ## Reuse the existing ATProto project
 
-Cloudless builds on [svebcomponents/atproto](https://github.com/svebcomponents/atproto):
+Cloudless consumes the published packages through their public APIs. The post and thread experience should remain recognizable as the same component people can embed on their own sites.
 
 | Piece | Reuse | Integration work |
 | --- | --- | --- |
-| `@svebcomponents/atproto.comments` | Thread rendering, rich text, reply composer, reactions, live updates | A compact feed-card presentation and an injectable extension client |
-| `@svebcomponents/atproto.client` | Thread normalization, viewer URLs, bridge API contract | Extension messaging and storage adapters |
+| `@svebcomponents/atproto.comments` | The actual custom element: rendering, rich text, composer, reactions, live updates, public events, CSS variables, and parts | Reusable compact / collapsed presentation and an injectable session client |
+| `@svebcomponents/atproto.client` | Public types, URI parsing, thread fetching and normalization, rich-text segmentation, viewer URLs, bridge API contract | Shared feed/post primitives and replaceable session storage / sign-in dependencies where needed |
 | `@svebcomponents/atproto.bridge` | Hosted OAuth, server-side credentials, replies, likes / unlikes, reposts / undo | Extension sign-in handoff, origin validation, and authenticated timeline access |
+
+### A showcase built on the public APIs
+
+- Mount the real `<atproto-comments>` custom element inside the extension frame. Keep rendering, reaction state, optimistic updates, and reply composition in the package.
+- Supply real normalized snapshots through the existing `threadData` JavaScript property and pass `fetchedAt` for freshness. Use `fetchCommentTree`, `normalizeThread`, and the exported types instead of maintaining a second thread model.
+- Theme through the existing `--atproto-comments-*` properties and `::part(...)` hooks. Use the documented component events and `revalidate()` method for integration.
+- Add missing general-purpose capabilities to `svebcomponents/atproto` and consume their published releases. Extension messaging, X selectors, filtering, and replacement scheduling belong in Cloudless.
+- Use SvelteKit for the packaged UI shell. Personalized feed data arrives at runtime; SSR is appropriate for a separate public demo or documentation page, rather than baking a user's timeline into the extension build.
+
+The current component is built for comment sections. Before using it for arbitrary feed posts, preserve moderation labels on the root post and explicitly handle its currently unsupported media embeds. Its `show-root` option does not yet constitute a compact, moderated feed-card API. Likewise, injecting `fetchImpl` into `ServiceClient` alone does not move its token storage or popup sign-in into the extension worker.
+
+The [ATProto integration plan](docs/atproto-integration.md) maps the existing primitives to their uses, separates proposed APIs from shipped ones, and defines the first integration checks. Improvements to the ATProto packages should remain useful to other consumers.
 
 The hosted bridge is an existing dependency, not something shipped inside the extension. Its current HTTP(S)-only origin validation and website-oriented login handoff need explicit extension support. This must preserve session binding rather than treating a missing origin as trusted.
 
@@ -145,7 +163,7 @@ Prerender the UI routes to explicit HTML files that the manifest and iframe URLs
 
 SvelteKit's PWA service-worker registration is separate from the extension's background worker. Disable automatic web service-worker registration and declare the extension worker in `manifest.json`. Runtime server routes, form actions, and server-only modules stay on a hosted server; `adapter-static` does not turn them into extension-worker handlers.
 
-The first build spike should verify static page loading, relative asset paths, the extension CSP, iframe embedding, and worker messaging in a real unpacked extension.
+The first build spike should verify static page loading, relative asset paths, the extension CSP, iframe embedding, and worker messaging in a real unpacked extension. Bundle the published web-component entry locally; the package's `./svelte` export currently supplies types rather than a native Svelte runtime component.
 
 ## Filtering and replacements
 
@@ -161,9 +179,9 @@ Replacing a post changes what is displayed locally. X has already delivered the 
 
 ## First milestones
 
-1. Package one SvelteKit card page, content script, and background worker as a loadable extension.
-2. Connect the hosted bridge through an extension-bound session and verify a real like and reply.
-3. Add timeline access, a replacement queue, and stable replacement across X feed rerenders.
+1. Package the actual ATProto web component in a SvelteKit extension page and verify snapshots, theming, iframe layout, and worker messaging.
+2. Add reusable session-client injection and extension bridge support upstream; verify sign-in, existing reaction state, a real like / unlike, and a reply using the component's own UI.
+3. Add timeline access and safe feed-card presentation upstream, then a replacement queue and stable replacement across X feed rerenders in Cloudless.
 4. Add configurable filters, classifier evaluation, and reveal / undo controls.
 
 See also: [Chrome content scripts](https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts), [extension messaging](https://developer.chrome.com/docs/extensions/develop/concepts/messaging), and [extension CSP](https://developer.chrome.com/docs/extensions/reference/manifest/content-security-policy).
